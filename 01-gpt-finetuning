@@ -1,0 +1,79 @@
+!pip install datasets
+!pip install transformers -U
+!pip install accelerate -U
+!pip install trl
+
+import torch
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+from datasets import load_dataset
+DATASET_NAME = "mlabonne/guanaco-llama2-1k"
+dataset = load_dataset(DATASET_NAME)
+
+print(dataset)
+
+training_dataset = dataset['train']
+print(training_dataset)
+
+training_dataset[0]
+training_dataset[11]
+training_dataset[7]
+
+MODEL_NAME = "distilgpt2" 
+import transformers
+from transformers import AutoModelForCausalLM 
+from transformers import AutoTokenizer 
+
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map = "auto") 
+model.config.use_cache = True 
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True) 
+
+tokenizer.pad_token = tokenizer.eos_token 
+tokenizer.padding_side = 'right' 
+tokenizer.pad_token_id = tokenizer.eos_token_id 
+
+generation_configuration = model.generation_config 
+generation_configuration.pad_token_id = tokenizer.eos_token_id
+generation_configuration.eos_token_id = tokenizer.eos_token_id
+generation_configuration.max_new_tokens = 1024 
+
+generation_configuration.temperature = 0.7 
+generation_configuration.top_p = 0.9 
+generation_configuration.top_k = 20 
+generation_configuration.do_sample = True
+
+def generate(prompt):
+
+  encoded = tokenizer.encode(prompt, add_special_tokens=True, return_tensors="pt").to(device) 
+  out = model.generate(input_ids=encoded, repetition_penalty=2.0, do_sample=True) 
+  string_decoded = tokenizer.decode(out[0].tolist(), clean_up_tokenization_spaces=True) 
+  print(string_decoded)
+
+generate('this is')
+generate('how are you')
+
+from trl import SFTConfig, SFTTrainer 
+from transformers import TrainingArguments 
+
+training_args = SFTConfig( 
+      gradient_accumulation_steps=1, # Pas d’accumulation de gradient. Un update par batch.
+      num_train_epochs=1, 
+      learning_rate=2e-4, 
+      fp16=True, 
+      output_dir="logs", 
+      lr_scheduler_type="cosine", 
+      warmup_ratio=0.05, 
+      group_by_length=True, 
+      max_length=512, 
+      # neftune_noise_alpha=5, 
+      do_sample=True, 
+)
+
+trainer = SFTTrainer(model=model, train_dataset=training_dataset, processing_class=tokenizer, args=training_args)
+
+trainer.train()
+
+import wandb
+wandb.init(project="your_project_name", name="your_run_name")
+
+generate('how are you')
